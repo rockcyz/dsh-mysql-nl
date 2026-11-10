@@ -132,6 +132,62 @@ describe('explainSql — teaching hints', () => {
     assert.equal(explainSql('SELECT ID, Name FROM city').hints.some((hint) => hint.includes('SELECT *')), false);
   });
 
+  it('does not mistake a multiplication sign for SELECT *', () => {
+    // `ROUND(Population / total * 100, 2)` is a percentage calculation. The old hint test matched
+    // any star, so it told students their explicit column list was `SELECT *`.
+    const sql = 'SELECT ROUND(Population / continent_total * 100, 2) AS pct FROM country';
+    assert.equal(explainSql(sql).hints.some((hint) => hint.includes('SELECT *')), false);
+  });
+
+  it('does not mistake COUNT(*) for SELECT *', () => {
+    assert.equal(explainSql('SELECT COUNT(*) AS n FROM country').hints.some((hint) => hint.includes('SELECT *')), false);
+    assert.equal(
+      explainSql('SELECT CountryCode, COUNT(*), SUM(Population) FROM city GROUP BY CountryCode')
+        .hints.some((hint) => hint.includes('SELECT *')),
+      false,
+    );
+  });
+
+  it('still fires for every real wildcard form', () => {
+    for (const sql of [
+      'SELECT * FROM city',
+      'SELECT DISTINCT * FROM city',
+      'SELECT c.*, k.Name FROM city c JOIN country k ON c.CountryCode = k.Code',
+    ]) {
+      assert.ok(explainSql(sql).hints.some((hint) => hint.includes('SELECT *')), `${sql} should warn`);
+    }
+  });
+
+  it('ignores a star inside a string literal', () => {
+    assert.equal(explainSql("SELECT 'a, *' AS label, ID FROM city").hints.some((hint) => hint.includes('SELECT *')), false);
+  });
+
+  it('does not call a CTE body a subquery', () => {
+    // `WITH x AS (SELECT …)` declares a named result set; the WITH clause explains it. Reporting a
+    // subquery here contradicts the explanation right above it.
+    const sql =
+      'WITH continent_rank AS (SELECT Continent, Name, Population, SUM(Population) OVER (PARTITION BY Continent) AS t ' +
+      'FROM country) SELECT Continent, t FROM continent_rank';
+    const out = explainSql(sql);
+    assert.equal(out.hasSubquery, false);
+    assert.equal(out.hints.some((hint) => hint.includes('子查询')), false);
+  });
+
+  it('still reports a real subquery, including one inside a CTE body', () => {
+    assert.ok(explainSql('SELECT Name FROM country WHERE Code IN (SELECT CountryCode FROM city)').hints.some((hint) => hint.includes('子查询')));
+    const nested = explainSql('WITH x AS (SELECT a FROM t WHERE a IN (SELECT b FROM u)) SELECT a FROM x');
+    assert.equal(nested.hasSubquery, true);
+    assert.ok(nested.hints.some((hint) => hint.includes('子查询')));
+  });
+
+  it('still warns about SELECT * on the outer query of a CTE', () => {
+    // The fix must not silence the hint where the wildcard really is: two independent detections.
+    const sql = 'WITH x AS (SELECT Code FROM country) SELECT * FROM x';
+    const out = explainSql(sql);
+    assert.ok(out.hints.some((hint) => hint.includes('SELECT *')));
+    assert.equal(out.hasSubquery, false);
+  });
+
   it('catches an aggregate used in WHERE, which is the classic beginner mistake', () => {
     const sql = 'SELECT CountryCode FROM city WHERE COUNT(*) > 5 GROUP BY CountryCode';
     assert.ok(explainSql(sql).hints.some((hint) => /HAVING/.test(hint)));

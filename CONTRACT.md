@@ -364,7 +364,8 @@ export async function generateSql({ conn, loader, database, question, hintTables
  *    joins: Array<{table: string, alias?: string, on?: string}>,
  *    aggregates: string[],
  *    distinct: boolean,
- *    hasSubquery: boolean,
+ *    hasSubquery: boolean,   // a real `( SELECT …)`; CTE bodies declared by AS ( are excluded,
+ *                            // because the WITH clause already explains them
  *    hints: string[],
  *  }} */
 export function explainSql(sql);
@@ -374,6 +375,11 @@ export function explainSql(sql);
 `WHERE`, `ORDER BY` with no `LIMIT`, subqueries, `DISTINCT`) plus the write-statement alarms
 (missing `WHERE` on UPDATE/DELETE, INSERT without a column list). The Agent Skill contract requires
 the calling agent to relay them to the student.
+
+Hint detection is **positional, not textual**: the `SELECT *` warning fires only for a whole list
+item (`*`, `t.*`), never for `COUNT(*)` or a multiplication such as `ROUND(x * 100, 2)`, and a
+`( SELECT …` preceded by `AS` is a CTE body rather than a subquery. Both rules exist because the
+obvious regexes produced confidently wrong teaching text on ordinary queries.
 
 ### `lib/core/format.js`
 
