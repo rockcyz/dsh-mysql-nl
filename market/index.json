@@ -29,8 +29,8 @@
         "zh-cn": "连接 MySQL，读取真实表结构，把自然语言查询需求翻译成准确的 SQL 并执行；输出执行步骤、SQL、逐子句讲解与结果表格。默认只读。"
       },
       "author": "rockc",
-      "homepage": "https://github.com/rockc/dsh-mysql-nl",
-      "repository": { "url": "https://github.com/rockc/dsh-mysql-nl" },
+      "homepage": "https://github.com/YOUR_GITHUB_USERNAME/dsh-mysql-nl",
+      "repository": { "url": "https://github.com/YOUR_GITHUB_USERNAME/dsh-mysql-nl" },
       "metadata": {
         "category": "database",
         "labels": ["education"],
@@ -42,8 +42,8 @@
           "publishTimestamp": 1762745000,
           "source": {
             "type": "git",
-            "url": "https://github.com/rockc/dsh-mysql-nl",
-            "commit": "REPLACE_WITH_40_HEX_COMMIT_SHA"
+            "url": "https://github.com/YOUR_GITHUB_USERNAME/dsh-mysql-nl",
+            "commit": "8e53107abf740f81b37e777fc4550a2d73e1f50e"
           },
           "engines": { "dsh": ">=0.2.0" }
         }
