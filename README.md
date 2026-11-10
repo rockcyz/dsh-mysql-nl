@@ -130,7 +130,8 @@ Notes:
   also set `"isDefault": true`.
 - A **minimal single-connection** file works too (no `connections` array, no `id`), as does wrapping the
   whole document in `"mysql": { ... }`.
-- `readOnly` defaults to **`true`**. Writing requires an explicit `"readOnly": false`.
+- `readOnly` defaults to **`true`**. Setting it to `"false"` only affects **hand-written SQL** through
+  the CLI's `query --sql`; the natural-language path never executes a write regardless of this flag.
 - A typo'd key (for example `passwd` instead of `password`) is rejected with a message rather than
   silently ignored.
 
@@ -157,7 +158,7 @@ Add a `config` block to the `mysql-nl` row in the profile's `cordis.patch.yml`:
 |---|---|---|
 | `connectionsFile` | auto-discovered | Path to the connection store |
 | `profile` | the file's `default` | Default connection id |
-| `readOnly` | follows the connection | `true` forces read-only; `false` allows writes |
+| `readOnly` | follows the connection | `true` forces read-only; `false` only opens the manual-SQL path (NL writes never execute either way) |
 | `maxRows` | 200 | Rows returned per query (1–10000) |
 | `maxQueryMs` | 15000 | Per-statement timeout in ms (100–600000) |
 | `maxCellChars` | 400 | Characters kept per cell |
@@ -172,20 +173,42 @@ silently falling back.
 
 ### `mysql_nl_query` — the main entry point
 
-Pass the user's own words as `question`.
+Pass the user's own words as `question`. **Reads run; writes are generated and handed over, never
+executed** (see below).
 
 | Parameter | Required | Meaning |
 |---|---|---|
-| `question` | yes | The natural-language request |
+| `question` | yes | The natural-language request (a query *or* a request to change data) |
 | `connection` | | Connection id; defaults to the default connection |
 | `database` | | Database name; defaults to the connection's database |
 | `tables` | | Hint tables, skipping model table selection and improving accuracy |
-| `execute` | | Defaults to `true`; `false` returns the SQL without running it |
+| `execute` | | Reads only: defaults to `true`; `false` returns the SQL without running it |
 | `max_rows` | | Per-call row cap, overriding the connection setting |
 | `show_sql` | | Defaults to `true`; include the executed SQL in the reply |
 
 Returns the generated SQL, statement kind, risk level, tables touched, row count, elapsed time,
 truncation flag, a markdown table, and a short `reply` written for the user.
+
+#### Reads versus writes: the risk boundary
+
+This is the plugin's most important design decision:
+
+| Request | What the plugin does | Result |
+|---|---|---|
+| Query (`SELECT` / `WITH` / `SHOW` / `DESCRIBE` / `EXPLAIN`) | **Executes it** and returns real rows | `executed: true` |
+| Row changes (`INSERT` / `UPDATE` / `DELETE` / `REPLACE`) | **Generates the SQL + clause explanation + hand-off guide; never executes** | `executed: false`, `guard: 写操作：仅生成，不执行` |
+| Schema changes (`CREATE` / `ALTER` / `DROP` / `TRUNCATE`) | Same, plus a `SHOW CREATE TABLE` snapshot reminder | `executed: false` |
+| Management statements (`GRANT` / `SET` / `CALL` / transaction control / `KILL` …) | **Refused outright**; nothing is generated | throws |
+
+Why: a model can get a `WHERE` clause wrong, and writes are irreversible. The plugin does the parts
+that benefit from grounding — it reads the real schema so table and column names are right, and it
+explains the statement clause by clause, flagging a missing `WHERE` — while leaving **the
+irreversible step** to the person, in the client they control (DBeaver, MySQL Workbench). You get
+accurate write SQL built on your actual schema without the plugin ever being the thing that mutates
+your data.
+
+A write hand-off always contains: the `⚠️ 写操作：只生成，不执行` banner, a pre-execution checklist,
+the SQL ready to paste (terminator restored), the clause-by-clause explanation, and the client steps.
 
 ### `mysql_schema` — see the real structure
 
@@ -224,8 +247,10 @@ Pick a database and connection:
 
 | Mechanism | Behaviour |
 |---|---|
-| Read-only by default | A connection's `readOnly` defaults to `true`; write statements are refused before execution with a clear reason |
-| Dangerous syntax | In read-only mode: `FOR UPDATE`, `LOCK IN SHARE MODE`, `INTO OUTFILE/DUMPFILE`, `LOAD_FILE()`, `LOAD DATA`, `BENCHMARK()`, `SLEEP()` are refused |
+| Writes never execute | NL-generated `INSERT`/`UPDATE`/`DELETE`/DDL are generated and handed over **whatever the connection allows**, including `readOnly: false` |
+| Management statements refused | `GRANT` / `SET` / `CALL` / `LOAD DATA` / transaction control / `KILL` are neither generated nor run |
+| Read-only by default | A connection's `readOnly` defaults to `true`; the manual-SQL path allows reads only |
+| Dangerous syntax | `FOR UPDATE`, `LOCK IN SHARE MODE`, `INTO OUTFILE/DUMPFILE`, `LOAD_FILE()`, `BENCHMARK()`, `SLEEP()`, executable comments `/*!...*/` are refused — **a write hand-off is screened too** |
 | Single statement | Exactly one statement per call; `SELECT 1; DROP TABLE t` is rejected |
 | Literal-aware | Classification blanks string literals and comments, so `SELECT 'delete from x'` is not mistaken for a write |
 | Timeouts | `maxQueryMs` (default 15s) via a `MAX_EXECUTION_TIME` hint plus a hard connection destroy |
@@ -233,7 +258,8 @@ Pick a database and connection:
 | Grounding | Only table and column names that really exist are used |
 
 > The plugin's own checks prevent accidents; they are not an authorization boundary. The real boundary is
-> **database privileges** — grant the query account `SELECT` only.
+> **database privileges** — grant the query account `SELECT` only. Since write statements are handed to
+> your own client, the account that client uses is what governs them.
 
 ## How it works
 
@@ -245,22 +271,27 @@ user question
    │     small database -> whole schema in the prompt
    │     large database -> model picks tables from a name+comment index, then full detail
    ├─ 3. build the prompt (real schema + rules) and call the model (nl.js -> ctx.llm.stream)
-   ├─ 4. clean the SQL (strip fences) and run safety checks (sql.js)
-   ├─ 5. execute; on failure, hand the error back to the model once (client.js + nl.js)
-   └─ 6. render the markdown table and summary (format.js)
+   ├─ 4. clean the SQL (strip fences) and grade it (sql.js)
+   │     read -> execute / dml·ddl -> generate only / other -> refuse
+   ├─ 5. [read] execute; on failure hand the error to the model once (client.js + nl.js)
+   │     the repaired statement must still be a read, or it is refused — the repair path is not a
+   │     write entry point
+   ├─ 6. [write] no execution: render SQL + explanation + checklist + client steps (format.js)
+   └─ 7. render the markdown table and summary (format.js)
 ```
 
 | File | Responsibility |
 |---|---|
 | `lib/index.js` | Package entry, re-exports the Cordis plugin |
-| `lib/plugin-mysql.js` | Cordis plugin: registers the three tools, resolves config, calls `ctx.llm` |
+| `lib/plugin-mysql.js` | Cordis plugin: registers the three tools, resolves config, calls `ctx.llm`, splits read/write |
 | `lib/config-schema.js` | Config validation (Standard Schema + JSON Schema projection) |
 | `lib/core/config.js` | Connection file discovery, `${env:...}` substitution, default resolution |
 | `lib/core/client.js` | mysql2 pool, single-statement execution, timeouts, value normalization |
 | `lib/core/catalog.js` | `INFORMATION_SCHEMA` reads and compact schema rendering |
-| `lib/core/sql.js` | SQL cleaning, classification, read-only guard, `LIMIT` fallback, analysis |
-| `lib/core/nl.js` | Two-stage grounding: table selection -> generation -> repair |
-| `lib/core/format.js` | Result tables, summaries, connection rendering |
+| `lib/core/sql.js` | SQL cleaning, classification and grading (`statementGrade`), dangerous-syntax screening, `LIMIT` fallback, analysis |
+| `lib/core/nl.js` | Two-stage grounding: table selection -> generation -> repair; separate read and write rule sets |
+| `lib/core/explain.js` | Deterministic clause-by-clause explanation (reads *and* writes) |
+| `lib/core/format.js` | Result tables, execution steps, write hand-off rendering, connection info |
 
 **The plugin imports no `@deepseek-ai/*` package** — only `mysql2`. Tools are registered as raw
 definitions through Cordis `ctx.tools.register`, and the model route comes from the host's

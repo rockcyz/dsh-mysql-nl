@@ -27,8 +27,10 @@ $MYSQL_NL = @("$PWD/.agents/skills/mysql-nl/bin/mysql-nl.mjs",
             Where-Object { Test-Path $_ } | Select-Object -First 1
 ```
 
-只用三条命令：`schema`（读真实结构）、`query`（只读执行）、`dbs`（列库）。
-`query` 会自动做只读校验、加 LIMIT、加超时，并输出**执行步骤 / SQL / 语句讲解 / 结果**四段。
+只用三条命令：`schema`（读真实结构）、`query`（执行只读语句）、`dbs`（列库）。
+`query` 会自动做语句分级、加 LIMIT、加超时，并输出**执行步骤 / SQL / 语句讲解 / 结果**四段。
+遇到改数据的请求（增删改、建表改表），`query` **不会执行**，而是给出语句、讲解和交接指引——
+把它们转述给学生，让他复制到 DBeaver / Workbench 自己运行，并说明插件没有动数据。
 
 ## 作用域（第一件事）
 

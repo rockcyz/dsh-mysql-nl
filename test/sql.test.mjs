@@ -9,7 +9,9 @@ import {
   hasExecutableComment,
   maskLiterals,
   referencedTables,
+  screenDangerous,
   splitStatements,
+  statementGrade,
   withRowLimit,
 } from '../lib/core/sql.js';
 
@@ -172,6 +174,70 @@ describe('guard', () => {
   it('is not fooled by literals that contain forbidden keywords', () => {
     assert.equal(guard("SELECT 'for update' AS note FROM film", { readOnly: true }).ok, true);
     assert.equal(guard("SELECT 'delete from film' AS note", { readOnly: true }).ok, true);
+  });
+});
+
+describe('statementGrade', () => {
+  it('separates reads, DML, DDL, and everything else', () => {
+    const cases = [
+      ['SELECT 1', 'read'],
+      ['WITH x AS (SELECT 1) SELECT * FROM x', 'read'],
+      ['SHOW TABLES', 'read'],
+      ['DESCRIBE student', 'read'],
+      ['EXPLAIN SELECT 1', 'read'],
+      ['INSERT INTO t VALUES (1)', 'dml'],
+      ['UPDATE t SET a = 1', 'dml'],
+      ['DELETE FROM t', 'dml'],
+      ['REPLACE INTO t VALUES (1)', 'dml'],
+      ['CREATE TABLE t (id INT)', 'ddl'],
+      ['ALTER TABLE t ADD c INT', 'ddl'],
+      ['DROP TABLE t', 'ddl'],
+      ['TRUNCATE TABLE t', 'ddl'],
+    ];
+    for (const [sql, expected] of cases) {
+      assert.equal(statementGrade(classify(sql)), expected, `${sql} should grade as ${expected}`);
+    }
+  });
+
+  it('refuses privileged and session-control statements', () => {
+    // These are neither coursework SQL nor reads. Grading them "other" is what keeps the write
+    // hand-off from becoming a back door for GRANT/SET/CALL-style operations.
+    for (const sql of [
+      'GRANT ALL ON *.* TO root',
+      'SET GLOBAL max_connections = 1',
+      'CALL do_something()',
+      'COMMIT',
+      'SHUTDOWN',
+      'LOAD DATA INFILE "x" INTO TABLE t',
+    ]) {
+      assert.equal(statementGrade(classify(sql)), 'other', `${sql} must not be graded as a write`);
+    }
+  });
+
+  it('grades a CTE-prefixed write as a write, not a read', () => {
+    assert.equal(statementGrade(classify('WITH x AS (SELECT 1 AS a) DELETE FROM t WHERE id IN (SELECT a FROM x)')), 'dml');
+  });
+});
+
+describe('screenDangerous', () => {
+  it('accepts ordinary reads and writes', () => {
+    assert.equal(screenDangerous('SELECT * FROM t').ok, true);
+    assert.equal(screenDangerous('UPDATE t SET a = 1 WHERE id = 2').ok, true);
+  });
+
+  it('refuses constructs that reach outside the database, whatever the statement kind', () => {
+    // Screened separately from the read-only policy: these are refused even when the statement is
+    // only going to be shown to the user.
+    for (const sql of [
+      'SELECT * FROM t INTO OUTFILE "/tmp/x"',
+      'SELECT LOAD_FILE("/etc/passwd")',
+      'SELECT BENCHMARK(1000000, MD5("x"))',
+      'SELECT SLEEP(10)',
+      "SELECT * FROM t FOR UPDATE",
+      '/*!50000 DROP TABLE t */ SELECT 1',
+    ]) {
+      assert.equal(screenDangerous(sql).ok, false, `${sql} should be refused`);
+    }
   });
 });
 

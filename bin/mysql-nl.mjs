@@ -29,13 +29,14 @@ import process from 'node:process';
 import { CONNECTION_FILE_NAMES, loadConnections, resolveConnection, stripByteOrderMark } from '../lib/core/config.js';
 import { describeTarget, disposeAll, ping, runQuery } from '../lib/core/client.js';
 import { listDatabases, loadCatalog, loadTableDetails, renderSchema } from '../lib/core/catalog.js';
-import { analyze, guard, referencedTables, withRowLimit } from '../lib/core/sql.js';
+import { analyze, guard, referencedTables, statementGrade, withRowLimit } from '../lib/core/sql.js';
 import { explainSql } from '../lib/core/explain.js';
 import {
   renderConnection,
   renderExplanation,
   renderQuerySteps,
   renderResultTable,
+  renderWriteHandoff,
   summarizeResult,
 } from '../lib/core/format.js';
 
@@ -76,7 +77,7 @@ const USAGE = `mysql-nl — 读取真实表结构 / 执行只读 SQL（DSH 插�
   mysql-nl schema [--db <库>] [--tables a,b] [--brief] [--max-chars N]
                                        输出紧凑的表结构文本（喂给模型或人看）
   mysql-nl query --sql "<SQL>" [--db <库>] [--max-rows N] [--json]
-                                       只读校验后执行，输出 markdown 表格（或 JSON）
+                                       执行只读语句输出表格；写语句只生成 + 讲解 + 交接指引
   mysql-nl verify --semantic <文件> [--db <库>]
                                        校验领域语义层与真实库是否一致（表/列/类型/
                                        禁用表/示例可执行），防止 skill 随库漂移腐烂
@@ -108,11 +109,16 @@ verify 选项:
 连接文件候选名（在 --cwd 起逐级向上查找，再查用户主目录）:
   ${CONNECTION_FILE_NAMES.join('\n  ')}
 
-退出码: 0 成功 / 1 错误 / 2 被只读策略拒绝 / 64 用法错误
+退出码: 0 成功 / 1 错误 / 2 被策略拒绝（含写语句交接） / 64 用法错误
 
-只读策略: 由连接配置的 "readOnly" 决定（默认 true，即只允许
-SELECT/WITH/SHOW/DESCRIBE/EXPLAIN）。CLI 不提供绕过开关；要写操作请在连接配置里显式写
-"readOnly": false。`;
+读写策略（重要）:
+  * 查询（SELECT / WITH / SHOW / DESCRIBE / EXPLAIN）直接执行并返回数据；
+  * 写操作（INSERT / UPDATE / DELETE / CREATE TABLE / ALTER TABLE / DROP TABLE）**不会被
+    执行**：命令会输出完整的语句、逐子句讲解、执行前核对清单，以及复制到
+    DBeaver / MySQL Workbench 自行运行的指引，退出码 2。数据风险留在用户自己的客户端里；
+  * 管理语句（GRANT / SET / CALL / 事务控制等）直接拒绝。
+  连接配置里的 "readOnly": false 只对**你自己手写的 SQL** 生效，是唯一残余的写入口；
+  NL（自然语言）路径永远不会执行写语句。`;
 
 /**
  * Parse `argv` into flags and positionals.
@@ -295,6 +301,55 @@ async function commandQuery(flags) {
   const verdict = guard(sql, { readOnly });
   if (!verdict.ok) {
     // A refusal is a policy answer, not a crash: exit 2 so a caller can branch on it.
+    // A write statement is the one refusal that still has teaching value: show the statement, its
+    // clause-by-clause explanation, and how to run it in the user's own client.
+    const grade = verdict.kind === undefined ? 'other' : statementGrade({ kind: verdict.kind });
+    if (readOnly && (grade === 'dml' || grade === 'ddl')) {
+      const statement = sql.trim();
+      const analysis = analyze(statement);
+      if (flags.json === true) {
+        return {
+          text: JSON.stringify(
+            {
+              connection: conn.id,
+              database,
+              sql: statement,
+              executed: false,
+              refused: 'write-statement',
+              statementKind: analysis.statementKind,
+              risk: analysis.estimatedRisk,
+              explanation: explainSql(statement),
+            },
+            null,
+            2,
+          ),
+          code: EXIT_REFUSED,
+        };
+      }
+      const tableRefs = referencedTables(statement);
+      const handoff = [
+        renderQuerySteps({
+          connection: conn,
+          database,
+          readOnly: true,
+          statementKind: analysis.statementKind,
+          tables: tableRefs,
+          policy: 'handoff',
+          result: FAILED_RESULT,
+        }),
+        renderWriteHandoff({
+          sql: statement,
+          statementKind: analysis.statementKind,
+          grade,
+          hasWhere: analysis.hasWhere,
+          connection: conn,
+          database,
+          tables: tableRefs,
+          explanation: explainSql(statement),
+        }),
+      ].join('\n');
+      return { text: handoff, code: EXIT_REFUSED };
+    }
     process.stderr.write(
       `已拒绝执行：${verdict.reason ?? '未知原因'}\n` +
         (readOnly ? `当前连接 ${conn.id} 为只读模式（readOnly）\n` : '') +

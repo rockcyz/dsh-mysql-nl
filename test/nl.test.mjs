@@ -134,8 +134,7 @@ describe('generateSql', () => {
     assert.equal(calls[1][2], undefined, 'full-detail pass must not filter tables');
   });
 
-  it('honours hint tables and still loads real column detail for them', async () => {
-    const calls = [];
+  it('honours hint tables and still loads real column detail for them', async () => {    const calls = [];
     const llm = async () => 'SELECT Code, Name FROM country LIMIT 5';
     const out = await generateSql({
       conn: CONN,
@@ -259,5 +258,54 @@ describe('generateSql', () => {
       }),
       /没有任何表/,
     );
+  });
+
+  it('asks for a read-only statement unless the caller opts into write generation', async () => {
+    let system = '';
+    const llm = async (options) => {
+      system = options.system;
+      return 'SELECT Name FROM city LIMIT 5';
+    };
+    await generateSql({ conn: CONN, loader: fakeLoader([]), database: 'world', question: '城市', llm, provider: 'p', model: 'm' });
+    assert.match(system, /只输出\*\*一条\*\* SELECT/);
+    assert.doesNotMatch(system, /INSERT \/ UPDATE \/ DELETE \/ REPLACE/);
+
+    await generateSql({
+      conn: CONN,
+      loader: fakeLoader([]),
+      database: 'world',
+      question: '把城市的名字改一下',
+      llm,
+      provider: 'p',
+      model: 'm',
+      allowWrite: true,
+    });
+    // Write mode is a different rule set, not the read prompt plus a permission line.
+    assert.match(system, /INSERT \/ UPDATE \/ DELETE \/ REPLACE/);
+    assert.doesNotMatch(system, /只输出\*\*一条\*\* SELECT/);
+    // The model must know the statement will not be executed by this tool.
+    assert.match(system, /不会执行/);
+    assert.match(system, /DBeaver/);
+    // Safety instruction that matters most for writes.
+    assert.match(system, /WHERE/);
+    assert.match(system, /绝不/);
+  });
+
+  it('keeps management statements out of the write prompt', async () => {
+    let system = '';
+    await generateSql({
+      conn: CONN,
+      loader: fakeLoader([]),
+      database: 'world',
+      question: 'x',
+      llm: async (options) => {
+        system = options.system;
+        return 'SELECT 1';
+      },
+      provider: 'p',
+      model: 'm',
+      allowWrite: true,
+    });
+    assert.match(system, /绝不\*\*输出 GRANT/);
   });
 });

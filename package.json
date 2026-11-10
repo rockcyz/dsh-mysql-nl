@@ -1,6 +1,6 @@
 {
   "name": "dsh-mysql-nl",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "DeepSeek Harness 插件：连接 MySQL，读取数据表结构，把你的自然语言查询需求翻译成准确的 SQL 并执行。",
   "main": "lib/index.js",

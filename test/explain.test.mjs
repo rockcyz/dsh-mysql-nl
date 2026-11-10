@@ -260,3 +260,67 @@ describe('renderExplanation', () => {
     assert.match(renderExplanation(explainSql('SHOW TABLES')), /没有可拆解的子句/);
   });
 });
+
+describe('explainSql — write statements', () => {
+  it('breaks an UPDATE into UPDATE / SET / WHERE', () => {
+    const out = explainSql("UPDATE `student` SET `Sname` = '李四' WHERE `Sno` = 2000014");
+    assert.equal(out.kind, 'update');
+    assert.deepEqual(out.clauses.map((clause) => clause.key), ['update', 'set', 'where']);
+    assert.match(out.clauses[0].text, /`student`/);
+    assert.match(out.clauses[1].text, /`Sname` = '李四'/);
+  });
+
+  it('breaks a DELETE into DELETE FROM / WHERE', () => {
+    const out = explainSql('DELETE FROM `sc` WHERE `Grade` IS NULL');
+    assert.equal(out.kind, 'delete');
+    assert.deepEqual(out.clauses.map((clause) => clause.key), ['delete', 'where']);
+    // `DELETE FROM` is one clause: splitting them would leave an empty DELETE body.
+    assert.equal(out.clauses[0].label, 'DELETE FROM');
+    assert.match(out.clauses[0].text, /`sc`/);
+  });
+
+  it('breaks an INSERT into INSERT INTO / VALUES', () => {
+    const out = explainSql('INSERT INTO `sc` (`Sno`, `Cno`, `Grade`) VALUES (2000014, 1, 88)');
+    assert.equal(out.kind, 'insert');
+    assert.deepEqual(out.clauses.map((clause) => clause.key), ['insert', 'values']);
+    assert.match(out.clauses[0].text, /`Sno`, `Cno`, `Grade`/);
+  });
+
+  it('recognises DDL statements and names what they touch', () => {
+    assert.equal(explainSql('CREATE TABLE `t` (`id` INT PRIMARY KEY)').kind, 'create');
+    assert.equal(explainSql('ALTER TABLE `t` ADD COLUMN `c` INT').kind, 'alter');
+    assert.equal(explainSql('DROP TABLE `t`').kind, 'drop');
+    assert.equal(explainSql('TRUNCATE TABLE `t`').kind, 'truncate');
+    assert.match(explainSql('DROP TABLE `t`').clauses[0].note, /无法撤销/);
+  });
+
+  it('raises the missing-WHERE alarm for UPDATE and DELETE', () => {
+    assert.ok(explainSql('DELETE FROM `student`').hints.some((hint) => /没有 WHERE 条件/.test(hint)));
+    assert.ok(explainSql('UPDATE `student` SET `Sage` = 20').hints.some((hint) => /没有 WHERE 条件/.test(hint)));
+    // A guarded write gets the "verify the scope first" advice instead of the alarm.
+    const guarded = explainSql('DELETE FROM `student` WHERE `Sno` = 1').hints.join('\n');
+    assert.doesNotMatch(guarded, /没有 WHERE 条件/);
+    assert.match(guarded, /相同 WHERE 条件的 SELECT/);
+  });
+
+  it('warns about an INSERT with no column list', () => {
+    assert.ok(explainSql('INSERT INTO `student` VALUES (1, "甲")').hints.some((hint) => /列清单/.test(hint)));
+    // With an explicit list there is nothing to warn about.
+    assert.ok(!explainSql('INSERT INTO `student` (`Sno`) VALUES (1)').hints.some((hint) => /列清单/.test(hint)));
+  });
+
+  it('does not mistake a quoted identifier for a clause keyword', () => {
+    // `` `values` `` is a column name; treating it as a VALUES clause would mangle the explanation.
+    const out = explainSql('SELECT `values` FROM `t`');
+    assert.deepEqual(out.clauses.map((clause) => clause.key), ['select', 'from']);
+  });
+
+  it('never reports a write as a read kind', () => {
+    for (const sql of [
+      'INSERT INTO `t` (`a`) SELECT `a` FROM `u`',
+      'WITH x AS (SELECT 1 AS a) DELETE FROM `t` WHERE `id` IN (SELECT `a` FROM x)',
+    ]) {
+      assert.ok(['insert', 'delete'].includes(explainSql(sql).kind), `${sql} explained as ${explainSql(sql).kind}`);
+    }
+  });
+});

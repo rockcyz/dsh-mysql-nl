@@ -52,9 +52,13 @@ test('loadCatalog reports exactly the three world base tables with row estimates
     assert.equal(table.comment, undefined);
   }
   const city = catalog.tables.find((table) => table.name === 'city');
-  assert.equal(city.rowEstimate, 4046);
+  // `rowEstimate` comes from InnoDB's `TABLE_ROWS`, which is an estimate, not `COUNT(*)`: it drifts
+  // with inserts, deletes and stats refreshes, so asserting an exact number makes the suite fail on
+  // any machine whose `world` copy has been touched. Assert the order of magnitude instead — the
+  // real contract is "a sane estimate was read at all".
+  assert.ok(city.rowEstimate > 3000, `city estimate looks wrong: ${city.rowEstimate}`);
   const country = catalog.tables.find((table) => table.name === 'country');
-  assert.equal(country.rowEstimate, 239);
+  assert.ok(country.rowEstimate >= 200 && country.rowEstimate < 400, `country estimate looks wrong: ${country.rowEstimate}`);
 });
 
 test('loadCatalog lists the sakila core tables', async () => {

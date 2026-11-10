@@ -149,4 +149,6 @@ node dsh-mysql-nl/scripts/build-skill.mjs --zip   # 打包分发
 - **别只发 `SKILL.md`。** 没有 `bin/` 和 `lib/`，agent 读到的只是一段"我有这些命令"的文字，一条也跑不了。
 - **别把 `.dsh-mysql.json` 一起发出去。** 里面是明文口令。分发前确认 zip 里只有 `mysql-nl.json` 的**模板**，没有真实配置。
 - **别为了让别人"能用"就把 `readOnly` 改成 `false`。** 学生写错一条 `DELETE` 就没有后悔药了。默认只读是保命的。
+  注意：NL 路径无论这个配置怎么设都不会执行写语句——写操作一律"生成 + 讲解 + 交接"，由用户在自己的
+  DBeaver / Workbench 里执行。`readOnly: false` 只放开你自己手写 SQL 的通道，别把它当成"功能开关"发给别人。
 - **别把 `node_modules` 从 zip 里删掉。** 看起来臃肿（1.2 MB），但这是"解压即用、不用联网装依赖"的代价，对教学场景很值。

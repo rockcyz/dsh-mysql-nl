@@ -126,7 +126,8 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
   （本仓库的 `.gitignore` 已经忽略 `.dsh-mysql.json`）。
 - `default` 指定默认连接；只有一个连接时可以省略。也可以用连接里的 `"isDefault": true`。
 - 也接受**只写一个连接**的最简形式（不需要 `connections` 数组和 `id`），或把内容包在 `"mysql": {...}` 里。
-- `readOnly` 默认就是 `true`。想要写操作必须显式写 `"readOnly": false`。
+- `readOnly` 默认就是 `true`。写成 `"false"` 只影响命令行**手写 SQL** 的 `query --sql` 通道；
+  自然语言这条路径无论怎么配都不会执行写语句。
 - 键名写错（例如把 `password` 写成 `passwd`）会被直接拒绝并提示，而不是被忽略。
 
 ## 插件配置项
@@ -152,7 +153,7 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
 |---|---|---|
 | `connectionsFile` | 自动查找 | 连接配置文件路径 |
 | `profile` | 文件里的 `default` | 默认连接 id |
-| `readOnly` | 跟随连接 | `true` 强制只读；`false` 允许写 |
+| `readOnly` | 跟随连接 | `true` 强制只读；`false` 只放开手写 SQL 通道（NL 写操作两种情况下都不执行） |
 | `maxRows` | 200 | 单次查询最多返回行数（1–10000） |
 | `maxQueryMs` | 15000 | 单条 SQL 超时毫秒数（100–600000） |
 | `maxCellChars` | 400 | 单个单元格保留的最大字符数 |
@@ -166,20 +167,39 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
 
 ### `mysql_nl_query` — 主入口
 
-把用户原话放进 `question` 即可。
+把用户原话放进 `question` 即可。**查询会执行，写操作只生成不执行**（见下）。
 
 | 参数 | 必填 | 说明 |
 |---|---|---|
-| `question` | ✅ | 自然语言查询需求 |
+| `question` | ✅ | 自然语言需求（查询或改数据的描述都行） |
 | `connection` | | 连接 id，默认用默认连接 |
 | `database` | | 数据库名，默认用连接的默认库 |
 | `tables` | | 提示用到的表，可跳过"模型选表"这一步，提高准确率 |
-| `execute` | | 默认 `true`；设 `false` 只生成 SQL 不执行 |
+| `execute` | | 仅对查询有效：默认 `true`；设 `false` 只生成 SQL 不执行 |
 | `max_rows` | | 本次最多返回行数，优先于连接配置 |
 | `show_sql` | | 默认 `true`，在结果里显示真正执行的 SQL |
 
 返回：生成的 SQL、语句类型、风险等级、涉及的表、行数、耗时、是否截断、markdown 表格，以及一段
 直接给用户看的结论（`reply`）。
+
+#### 读与写的分界：风险从插件剥离
+
+这是本插件最重要的设计约定：
+
+| 用户需求 | 插件行为 | 退出/返回 |
+|---|---|---|
+| 查询（SELECT / WITH / SHOW / DESCRIBE / EXPLAIN） | **直接执行**，返回真实数据 | `executed: true` |
+| 增删改（INSERT / UPDATE / DELETE / REPLACE） | **只生成 SQL + 逐子句讲解 + 交接指引，绝不执行** | `executed: false`，`guard: 写操作：仅生成，不执行` |
+| 结构变更（CREATE / ALTER / DROP / TRUNCATE） | 同上，并额外提示 `SHOW CREATE TABLE` 备份结构 | `executed: false` |
+| 管理语句（GRANT / SET / CALL / 事务控制 / KILL 等） | **直接拒绝**，不生成 | 抛错 |
+
+为什么这样切：模型有概率写错条件（把 `WHERE Sno = 1` 写成 `WHERE Sname = '张三'` 之类），
+而写操作不可逆。插件负责**接地**（读真实结构，保证表名字段名对）和**讲解**（逐子句说明 + 缺 WHERE 的
+红色警告），把**不可逆的那一步**留给用户在 DBeaver / MySQL Workbench 里亲手确认。这样既拿到了
+"在真实结构上做准确写操作"的辅助，又把数据风险留在了你自己控制的客户端里。
+
+写操作返回的内容固定包含：`⚠️ 写操作：只生成，不执行` 提示、执行前核对清单、可直接粘贴运行的
+SQL（已补分号）、逐子句讲解，以及客户端执行步骤。
 
 ### `mysql_schema` — 看真实结构
 
@@ -211,16 +231,21 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
 
 > 「在 company 这个库（用 prod-report 连接）里查出员工数最多的 3 个部门」
 
+想改数据（插件只给 SQL，不执行）：
+
+> 「把学号 2000014 的姓名改成李四」→ 插件输出 `UPDATE` 语句 + 讲解 + 交接指引，
+> 由你复制到 DBeaver / Workbench 执行。返回里 `executed` 为 `false`，数据一行都没动。
+
 ## 教学输出（面向数据库课）
 
 学生要学的不只是答案，而是**这条 SQL 是怎么来的**。所以每次查询的输出固定为四段，
 插件和命令行**完全一致**：
 
 ```
-### 执行步骤      连的哪台库、只读校验结果、涉及哪些表、自动补了什么、耗时多久
+### 执行步骤      连的哪台库、校验结果、涉及哪些表、自动补了什么、耗时多久
 ### SQL 语句      完整语句（学生写的那句，不含插件注入的超时提示）
 ### 语句讲解      逐子句结构说明 + 教学提示
-### 查询结果      数据表格
+### 查询结果      数据表格（写操作时改为「执行前核对 + 客户端执行指引」）
 ```
 
 `语句讲解` 由一个**不依赖大模型的确定性分析器**（`lib/core/explain.js`）生成。这样做的原因是：
@@ -228,6 +253,7 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
 两种载体的输出就会不一致。确定性讲解永远在场、不会编错、可以单元测试。
 
 它会逐子句说明 `SELECT / FROM / JOIN / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT` 各自在做什么，
+写语句则拆成 `INSERT INTO / VALUES`、`UPDATE / SET / WHERE`、`DELETE FROM / WHERE` 等子句，
 并识别这些典型错误：
 
 | 教学提示 | 触发条件 |
@@ -236,6 +262,9 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
 | JOIN 缺 `ON` 会产生笛卡尔积 | 有 `JOIN` 但没有 `ON` |
 | `SELECT *` 会取出所有列 | `SELECT *` |
 | 排序不减少行数 | 有 `ORDER BY` 但没有 `LIMIT` |
+| 🚨 没有 WHERE 会作用于整表 | `UPDATE` / `DELETE` 缺 `WHERE` |
+| 先跑相同 WHERE 的 SELECT 核对范围 | `UPDATE` / `DELETE` 带 `WHERE` |
+| `INSERT` 没写列清单会随表结构错位 | `INSERT` 无列清单 |
 
 **查询失败时同样输出步骤、SQL 和讲解** —— 报错的语句是最有教学价值的例子。
 
@@ -243,16 +272,18 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
 
 | 机制 | 行为 |
 |---|---|
-| 只读默认 | 连接 `readOnly` 默认 `true`；写语句在执行前被拒绝并说明原因 |
-| 危险语法拦截 | 只读模式下拒绝 `FOR UPDATE`、`LOCK IN SHARE MODE`、`INTO OUTFILE/DUMPFILE`、`LOAD_FILE()`、`LOAD DATA`、`BENCHMARK()`、`SLEEP()` |
+| 写操作不执行 | 无论连接怎么配（含 `readOnly: false`），NL 生成的 `INSERT/UPDATE/DELETE/DDL` **只生成不执行**，附讲解与交接指引 |
+| 管理语句拒绝 | `GRANT` / `SET` / `CALL` / `LOAD DATA` / 事务控制 / `KILL` 等一律不生成、不执行 |
+| 只读默认 | 连接 `readOnly` 默认 `true`；手写 SQL 通道也默认只允许读 |
+| 危险语法拦截 | 拒绝 `FOR UPDATE`、`LOCK IN SHARE MODE`、`INTO OUTFILE/DUMPFILE`、`LOAD_FILE()`、`BENCHMARK()`、`SLEEP()`、可执行注释 `/*!...*/`——**写语句交接前同样过这一层** |
 | 单语句 | 一次只允许一条语句，禁止 `SELECT 1; DROP TABLE t` |
 | 字面量感知 | 判断语句类型时会屏蔽字符串与注释，`SELECT 'delete from x'` 不会被误判为写操作 |
 | 超时 | `maxQueryMs`（默认 15 秒），同时用 `MAX_EXECUTION_TIME` 提示和硬性连接销毁 |
 | 行数/长度上限 | 行数按 `maxRows` 截断并如实告知；单元格超长截断 |
 | 结构接地 | 只允许使用真实存在的表名和字段名 |
 
-> 说明：插件自身的检查是"防误伤"而不是权限边界。真正的安全边界应该是**数据库账号权限**——
-> 给查询用的账号只授予 `SELECT`。
+> 说明：插件自身的检查是"防误伤"而不是权限边界。真正的安全边界仍然是**数据库账号权限**——
+> 给查询用的账号只授予 `SELECT`。写操作既然交接到你自己的客户端，就由你客户端所用的账号权限来管。
 
 ## 工作原理
 
@@ -264,9 +295,12 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
    │     表少 → 整库结构入提示词
    │     表多 → 先让模型按表名+注释选表，再取这些表的完整字段
    ├─ 3. 组装提示词（真实结构 + 规则），调用模型生成 SQL（nl.js → ctx.llm.stream）
-   ├─ 4. 清洗 SQL（去 markdown 围栏/多余语句）并做安全检查（sql.js）
-   ├─ 5. 执行；失败则带上错误让模型重写一次（client.js + nl.js）
-   └─ 6. 渲染 markdown 表格与结论（format.js）
+   ├─ 4. 清洗 SQL（去 markdown 围栏/多余语句）并分级（sql.js）
+   │     分级结果决定后续走向：read → 执行 / dml·ddl → 只生成 / other → 拒绝
+   ├─ 5. 【读】执行；失败则带上错误让模型重写一次（client.js + nl.js）
+   │     重写结果必须仍是 read，否则拒绝执行（防止修复路径变成写入口）
+   ├─ 6. 【写】不连接执行：渲染 SQL + 讲解 + 核对清单 + 客户端指引（format.js）
+   └─ 7. 渲染 markdown 表格与结论（format.js）
 ```
 
 模块划分：
@@ -274,14 +308,15 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
 | 文件 | 职责 |
 |---|---|
 | `lib/index.js` | 包入口，转出 Cordis 插件 |
-| `lib/plugin-mysql.js` | Cordis 插件：注册三个工具、解析配置、调用 `ctx.llm` |
+| `lib/plugin-mysql.js` | Cordis 插件：注册三个工具、解析配置、调用 `ctx.llm`、读写分流 |
 | `lib/config-schema.js` | 配置校验（Standard Schema + JSON Schema 投影） |
 | `lib/core/config.js` | 连接文件查找、`${env:...}` 替换、默认连接解析 |
 | `lib/core/client.js` | mysql2 连接池、单语句执行、超时、值归一化 |
 | `lib/core/catalog.js` | `INFORMATION_SCHEMA` 读取与结构文本渲染 |
-| `lib/core/sql.js` | SQL 清洗、语句分类、只读守卫、`LIMIT` 兜底、结构分析 |
-| `lib/core/nl.js` | 两阶段接地：选表 → 生成 SQL → 修复 |
-| `lib/core/format.js` | 结果表格、摘要、连接信息渲染 |
+| `lib/core/sql.js` | SQL 清洗、语句分类与分级（`statementGrade`）、危险语法筛查、`LIMIT` 兜底、结构分析 |
+| `lib/core/nl.js` | 两阶段接地：选表 → 生成 SQL → 修复；读写两套提示词 |
+| `lib/core/explain.js` | 确定性逐子句讲解（读语句与写语句都覆盖） |
+| `lib/core/format.js` | 结果表格、执行步骤、写操作交接渲染、连接信息 |
 
 **这个插件不 import 任何 `@deepseek-ai/*` 包**，只依赖 `mysql2`。工具通过 Cordis 的
 `ctx.tools.register` 直接注册原始定义，模型路由从宿主的 `agentDefaultModel` / `llm` 服务读取。

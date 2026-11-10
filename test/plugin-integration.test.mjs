@@ -36,6 +36,20 @@ async function prepareTarget() {
 
 const connectionsFile = await prepareTarget();
 
+/**
+ * A second store whose connection explicitly allows writes. The plugin must generate-and-hand-off
+ * there too: "the account may write" is not permission for this tool to write.
+ */
+const readWriteConnectionsFile = await (async () => {
+  const file = path.join(tempRoot, '.dsh-mysql-rw.json');
+  await fs.writeFile(file, JSON.stringify({
+    version: 1,
+    default: 'rw',
+    connections: [{ id: 'rw', host: HOST, port: PORT, user: USER, password: PASSWORD, database: DATABASE, readOnly: false }],
+  }, null, 2));
+  return file;
+})();
+
 let reachable = false;
 try {
   const mysql = await import('mysql2/promise');
@@ -85,7 +99,7 @@ function harness(options = {}) {
       return undefined;
     },
   };
-  apply(ctx, { connectionsFile, maxRows: 20 });
+  apply(ctx, { connectionsFile: options.connectionsFile ?? connectionsFile, maxRows: 20 });
   const tool = (toolName) => definitions.find((definition) => definition.name === toolName);
   return { definitions, seen, tool };
 }
@@ -161,16 +175,26 @@ describe('agent-facing tool path', { skip: !reachable }, () => {
     );
   });
 
-  it('refuses to hand back a write statement even with execute false', async () => {
+  it('hands a write statement off for manual execution instead of rejecting it', async () => {
     const { tool } = harness({
-      chunks: [{ type: 'text-delta', index: 0, text: 'DELETE FROM `country`' }],
+      chunks: [{ type: 'text-delta', index: 0, text: 'DELETE FROM `country` WHERE `Code` = \'XXX\'' }],
     });
-    // The guard runs before the execute flag is honoured, so an unsafe statement is never returned
-    // to the model as if it were a harmless preview.
-    await assert.rejects(
-      () => tool('mysql_nl_query').execute({ question: '删掉所有国家', execute: false }, exec()),
-      /没有要求执行.*只读模式/s,
-    );
+    // The refusal became a hand-off: the SQL is now the useful answer, because the plugin grounds it
+    // in the real schema even though it must never run it.
+    const value = await tool('mysql_nl_query').execute({ question: '删掉那个国家', execute: false }, exec());
+    assert.equal(value.executed, false);
+    assert.equal(value.rowCount, 0);
+    assert.equal(value.elapsedMs, 0);
+    assert.equal(value.statementKind, 'delete');
+    assert.equal(value.risk, '高');
+    assert.match(value.guard, /仅生成/);
+    assert.match(value.reply, /写操作：只生成，不执行/);
+    assert.match(value.reply, /### SQL 语句/);
+    assert.match(value.reply, /### 语句讲解/);
+    assert.match(value.reply, /\*\*DELETE FROM\*\*/);
+    assert.match(value.reply, /DBeaver/);
+    assert.match(value.reply, /在你的客户端执行/);
+    assert.doesNotMatch(value.reply, /### 查询结果/);
   });
 
   it('returns a select without executing it when execute is false', async () => {
@@ -191,13 +215,46 @@ describe('agent-facing tool path', { skip: !reachable }, () => {
     assert.doesNotMatch(value.reply, /### 查询结果/);
   });
 
-  it('refuses a write generated for a read-only connection', async () => {
+  it('never executes a generated write, even on a read-write connection', async () => {
+    const probe = '__dsh_write_probe';
+    const mysql = await import('mysql2/promise');
+    const pool = mysql.createPool({ host: HOST, port: PORT, user: USER, password: PASSWORD, database: DATABASE, connectionLimit: 1 });
+    const probeExists = async () => {
+      const [rows] = await pool.query(
+        'SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = ? AND table_name = ?',
+        [DATABASE, probe],
+      );
+      return rows[0].n > 0;
+    };
+    try {
+      await pool.query(`DROP TABLE IF EXISTS \`${probe}\``);
+      assert.equal(await probeExists(), false, 'probe table must start absent');
+
+      const { tool } = harness({
+        connectionsFile: readWriteConnectionsFile,
+        chunks: [{ type: 'text-delta', index: 0, text: `CREATE TABLE \`${probe}\` (\`id\` INT)` }],
+      });
+      // `readOnly: false` is the strongest case: the connection allows writes, and the plugin still
+      // must not perform one. The probe makes "did not execute" observable on the server itself.
+      const value = await tool('mysql_nl_query').execute({ question: '建一张探针表', connection: 'rw' }, exec());
+      assert.equal(value.connection, 'rw');
+      assert.equal(value.executed, false);
+      assert.equal(value.statementKind, 'create');
+      assert.match(value.guard, /仅生成/);
+      assert.equal(await probeExists(), false, 'the generated CREATE TABLE must never have run');
+    } finally {
+      await pool.query(`DROP TABLE IF EXISTS \`${probe}\``);
+      await pool.end();
+    }
+  });
+
+  it('refuses management statements that are neither reads nor coursework SQL', async () => {
     const { tool } = harness({
-      chunks: [{ type: 'text-delta', index: 0, text: 'DELETE FROM `country`' }],
+      chunks: [{ type: 'text-delta', index: 0, text: "SET GLOBAL max_connections = 1" }],
     });
     await assert.rejects(
-      () => tool('mysql_nl_query').execute({ question: '删掉所有国家' }, exec()),
-      /只读模式/,
+      () => tool('mysql_nl_query').execute({ question: '把最大连接数调成1' }, exec()),
+      /不在支持范围/,
     );
   });
 

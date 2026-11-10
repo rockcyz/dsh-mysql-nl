@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { renderConnection, renderResultTable, summarizeResult } from '../lib/core/format.js';
+import { renderConnection, renderResultTable, renderWriteHandoff, summarizeResult } from '../lib/core/format.js';
+import { renderQuerySteps } from '../lib/core/format.js';
+import { explainSql } from '../lib/core/explain.js';
 
 /** @returns {import('../lib/core/types.js').QueryResult} */
 function result(overrides = {}) {
@@ -84,5 +86,99 @@ describe('renderConnection', () => {
     assert.match(text, /密码 空/);
     assert.match(text, /读写/);
     assert.match(text, /最多 50 行 \/ 5000ms/);
+  });
+});
+
+describe('renderQuerySteps in hand-off mode', () => {
+  const steps = (overrides) =>
+    renderQuerySteps({
+      connection: { id: 'local', host: '127.0.0.1', port: 3306 },
+      database: 'jwgl',
+      readOnly: true,
+      statementKind: 'delete',
+      tables: [{ schema: null, table: 'student' }],
+      policy: 'handoff',
+      result: { database: 'jwgl', sql: '', columns: [], rows: [], rowCount: 0, truncated: false, elapsedMs: 0 },
+      ...overrides,
+    });
+
+  it('grades the statement instead of claiming a read-only pass', () => {
+    const text = steps();
+    // The old wording ("通过检查，只允许 SELECT...") would contradict handing a DELETE to the user.
+    assert.match(text, /语句分级/);
+    assert.match(text, /写操作/);
+    assert.match(text, /不执行/);
+    assert.doesNotMatch(text, /通过检查（只允许 SELECT/);
+  });
+
+  it('never claims an execution happened', () => {
+    const text = steps();
+    assert.doesNotMatch(text, /耗时/);
+    assert.match(text, /未执行/);
+  });
+
+  it('does not append LIMIT or timeout steps to a write', () => {
+    const text = steps({ limitApplied: 200, limitAdded: true, timeoutMs: 15000 });
+    assert.doesNotMatch(text, /自动补 LIMIT/);
+    assert.doesNotMatch(text, /MAX_EXECUTION_TIME/);
+  });
+});
+
+describe('renderWriteHandoff', () => {
+  const connection = { id: 'local', host: '127.0.0.1', port: 3306 };
+  const handoff = (overrides) =>
+    renderWriteHandoff({
+      sql: 'DELETE FROM `student` WHERE `Sno` = 2000014',
+      statementKind: 'delete',
+      grade: 'dml',
+      hasWhere: true,
+      connection,
+      database: 'jwgl',
+      tables: [{ schema: null, table: 'student' }],
+      explanation: explainSql('DELETE FROM `student` WHERE `Sno` = 2000014'),
+      ...overrides,
+    });
+
+  it('states plainly that it will not execute, and where to run it instead', () => {
+    const text = handoff();
+    assert.match(text, /只生成，不执行/);
+    assert.match(text, /插件不会执行它/);
+    assert.match(text, /DBeaver/);
+    assert.match(text, /MySQL Workbench/);
+    assert.match(text, /在你的客户端执行/);
+  });
+
+  it('hands over a statement that runs as pasted', () => {
+    // `cleanSql` strips the terminator; a hand-off has to put it back or the pasted SQL is incomplete.
+    assert.match(handoff({ sql: 'DELETE FROM `t`' }), /```sql\nDELETE FROM `t`;\n```/);
+    assert.match(handoff({ sql: 'DELETE FROM `t`;;;' }), /```sql\nDELETE FROM `t`;\n```/);
+  });
+
+  it('warns loudly when an UPDATE or DELETE has no WHERE', () => {
+    const text = handoff({ sql: 'UPDATE `student` SET `Sage` = 20', statementKind: 'update', hasWhere: false });
+    assert.match(text, /没有 WHERE 条件/);
+    assert.match(text, /整张表/);
+    // The "run the same WHERE as a SELECT first" advice is meaningless here; the whole table is the scope.
+    assert.match(text, /SELECT COUNT\(\*\)/);
+  });
+
+  it('tells the user to snapshot the structure for DDL, not to run a SELECT', () => {
+    const text = handoff({
+      sql: 'ALTER TABLE `student` ADD COLUMN `phone` VARCHAR(20)',
+      statementKind: 'alter',
+      grade: 'ddl',
+      hasWhere: false,
+      explanation: explainSql('ALTER TABLE `student` ADD COLUMN `phone` VARCHAR(20)'),
+    });
+    assert.match(text, /结构变更（DDL）/);
+    assert.match(text, /SHOW CREATE TABLE/);
+  });
+
+  it('includes the clause-by-clause teaching section and the target schema', () => {
+    const text = handoff();
+    assert.match(text, /### 语句讲解/);
+    assert.match(text, /\*\*DELETE FROM\*\*/);
+    assert.match(text, /\*\*WHERE\*\*/);
+    assert.match(text, /`jwgl`/);
   });
 });
