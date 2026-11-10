@@ -274,7 +274,7 @@ SQL（已补分号）、逐子句讲解，以及客户端执行步骤。
 |---|---|
 | 写操作不执行 | 无论连接怎么配（含 `readOnly: false`），NL 生成的 `INSERT/UPDATE/DELETE/DDL` **只生成不执行**，附讲解与交接指引 |
 | 管理语句拒绝 | `GRANT` / `SET` / `CALL` / `LOAD DATA` / 事务控制 / `KILL` 等一律不生成、不执行 |
-| 只读默认 | 连接 `readOnly` 默认 `true`；手写 SQL 通道也默认只允许读 |
+| 只读默认 | 连接 `readOnly` 默认 `true`。写 `"readOnly": false` 只放开手工 `query --sql` 通道（该通道可执行增删改/建表，但仍拒绝管理语句与危险构造） |
 | 危险语法拦截 | 拒绝 `FOR UPDATE`、`LOCK IN SHARE MODE`、`INTO OUTFILE/DUMPFILE`、`LOAD_FILE()`、`BENCHMARK()`、`SLEEP()`、可执行注释 `/*!...*/`——**写语句交接前同样过这一层** |
 | 单语句 | 一次只允许一条语句，禁止 `SELECT 1; DROP TABLE t` |
 | 字面量感知 | 判断语句类型时会屏蔽字符串与注释，`SELECT 'delete from x'` 不会被误判为写操作 |

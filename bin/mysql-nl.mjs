@@ -29,7 +29,7 @@ import process from 'node:process';
 import { CONNECTION_FILE_NAMES, loadConnections, resolveConnection, stripByteOrderMark } from '../lib/core/config.js';
 import { describeTarget, disposeAll, ping, runQuery } from '../lib/core/client.js';
 import { listDatabases, loadCatalog, loadTableDetails, renderSchema } from '../lib/core/catalog.js';
-import { analyze, guard, referencedTables, statementGrade, withRowLimit } from '../lib/core/sql.js';
+import { analyze, guard, referencedTables, screenDangerous, statementGrade, withRowLimit } from '../lib/core/sql.js';
 import { explainSql } from '../lib/core/explain.js';
 import {
   renderConnection,
@@ -116,9 +116,10 @@ verify 选项:
   * 写操作（INSERT / UPDATE / DELETE / CREATE TABLE / ALTER TABLE / DROP TABLE）**不会被
     执行**：命令会输出完整的语句、逐子句讲解、执行前核对清单，以及复制到
     DBeaver / MySQL Workbench 自行运行的指引，退出码 2。数据风险留在用户自己的客户端里；
-  * 管理语句（GRANT / SET / CALL / 事务控制等）直接拒绝。
-  连接配置里的 "readOnly": false 只对**你自己手写的 SQL** 生效，是唯一残余的写入口；
-  NL（自然语言）路径永远不会执行写语句。`;
+  * 管理语句（GRANT / SET / CALL / 事务控制等）直接拒绝，**读写连接也一样**；危险构造
+    （INTO OUTFILE、LOAD_FILE、FOR UPDATE、可执行注释等）同样一律拒绝；
+  连接配置里的 "readOnly": false 只对**你自己手写的 SQL** 生效，是唯一残余的写入口（且只放行
+  增删改与建表改表，不放行管理语句）；NL（自然语言）路径永远不会执行写语句。`;
 
 /**
  * Parse `argv` into flags and positionals.
@@ -358,6 +359,31 @@ async function commandQuery(flags) {
     return { text: '', code: EXIT_REFUSED };
   }
 
+  // The guard passed, which on a read-write connection means only that nothing rejected the
+  // statement. Two checks still apply there, because they are policy-free:
+  //   * dangerous constructs (server files, locking reads, executable comments) — a read-write
+  //     connection must not turn them into allowed statements;
+  //   * management statements (GRANT / SET / CALL / KILL / LOAD DATA / transaction control) —
+  //     `statementGrade` calls them "other", and this tool only handles data and queries.
+  const grade = statementGrade(verdict);
+  if (grade === 'other') {
+    process.stderr.write(
+      `已拒绝执行：语句类型 \`${verdict.kind}\` 属于数据库管理语句，本工具只执行查询与增删改。\n` +
+        `请用 mysql 客户端 / DBeaver / MySQL Workbench 执行这类语句。\n` +
+        `语句：${sql.trim()}\n`,
+    );
+    return { text: '', code: EXIT_REFUSED };
+  }
+  const screened = screenDangerous(sql);
+  if (!screened.ok) {
+    process.stderr.write(
+      `已拒绝执行：${screened.reason}。\n` +
+        `这类构造会读写服务器文件或施加锁，不属于本工具的执行范围。\n` +
+        `语句：${sql.trim()}\n`,
+    );
+    return { text: '', code: EXIT_REFUSED };
+  }
+
   const maxRows = positiveInt(flags['max-rows']) ?? conn.maxRows ?? 200;
   const finalSql = withRowLimit(sql, maxRows);
   const limitAdded = finalSql !== sql;
@@ -435,6 +461,8 @@ async function commandQuery(flags) {
           truncated: result.truncated,
           elapsedMs: result.elapsedMs,
           warning: result.warning,
+          ...(typeof result.affectedRows === 'number' ? { affectedRows: result.affectedRows } : {}),
+          ...(typeof result.insertId === 'number' ? { insertId: result.insertId } : {}),
         },
         null,
         2,
@@ -450,7 +478,13 @@ async function commandQuery(flags) {
   parts.push('### SQL 语句', '', '```sql', displaySql, '```', '');
   if (flags.quiet !== true) parts.push(renderExplanation(explanation));
 
-  parts.push(`### 查询结果（${summary}）`, '', renderResultTable(result, { maxRows: Math.min(maxRows, 50) }));
+  if (typeof result.affectedRows === 'number') {
+    // DML has no result set: the outcome is the changed-row count, not an empty table.
+    parts.push(`### 执行结果（${summary}）`, '', `已影响 **${result.affectedRows}** 行。`);
+    if (typeof result.insertId === 'number') parts.push('', `首个自增主键为 **${result.insertId}**。`);
+  } else {
+    parts.push(`### 查询结果（${summary}）`, '', renderResultTable(result, { maxRows: Math.min(maxRows, 50) }));
+  }
   if (result.truncated) {
     parts.push('', `> 结果已按上限 ${maxRows} 行截断。要更多数据请提高 \`--max-rows\`，或缩小查询范围。`);
   }

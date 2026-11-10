@@ -206,6 +206,10 @@ Rules that must keep holding:
  *  @property {boolean}  truncated
  *  @property {number}   elapsedMs
  *  @property {string}   [warning]    e.g. LIMIT was applied automatically
+ *  @property {number}   [affectedRows] rows changed by a DML statement (its OkPacket); present
+ *    instead of a result set. Renderers show "影响 N 行" from it — a successful UPDATE must never
+ *    read as "0 行".
+ *  @property {number}   [insertId]   first AUTO_INCREMENT value an INSERT assigned
  */
 ```
 

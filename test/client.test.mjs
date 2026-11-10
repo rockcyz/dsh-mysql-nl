@@ -150,6 +150,16 @@ test('a rejected database switch leaves the pool healthy', async () => {
   assert.deepEqual(result.rows, [[2]]);
 });
 
+test('a statement with no result set reports affectedRows instead of an empty row count', async () => {
+  // `DO 1` answers with an OkPacket and changes nothing, so it exercises the non-rowset branch of
+  // runQuery without touching data. Before this mapping a successful UPDATE rendered as "0 rows",
+  // which reads like the statement did nothing at all.
+  const result = await runQuery(testConn(), 'world', 'DO 1');
+  assert.deepEqual(result.columns, []);
+  assert.equal(result.rowCount, 0);
+  assert.equal(result.affectedRows, 0);
+});
+
 test('runQuery forwards MySQL errors with their code and the real table name', async () => {
   await assert.rejects(
     () => runQuery(testConn(), 'sakila', 'SELECT * FROM no_such_table_xyz'),

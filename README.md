@@ -249,7 +249,7 @@ Pick a database and connection:
 |---|---|
 | Writes never execute | NL-generated `INSERT`/`UPDATE`/`DELETE`/DDL are generated and handed over **whatever the connection allows**, including `readOnly: false` |
 | Management statements refused | `GRANT` / `SET` / `CALL` / `LOAD DATA` / transaction control / `KILL` are neither generated nor run |
-| Read-only by default | A connection's `readOnly` defaults to `true`; the manual-SQL path allows reads only |
+| Read-only by default | A connection's `readOnly` defaults to `true`. `"readOnly": false` only opens the manual `query --sql` lane, which then runs DML/DDL — and still refuses management statements and dangerous constructs |
 | Dangerous syntax | `FOR UPDATE`, `LOCK IN SHARE MODE`, `INTO OUTFILE/DUMPFILE`, `LOAD_FILE()`, `BENCHMARK()`, `SLEEP()`, executable comments `/*!...*/` are refused — **a write hand-off is screened too** |
 | Single statement | Exactly one statement per call; `SELECT 1; DROP TABLE t` is rejected |
 | Literal-aware | Classification blanks string literals and comments, so `SELECT 'delete from x'` is not mistaken for a write |

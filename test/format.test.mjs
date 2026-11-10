@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { renderConnection, renderResultTable, renderWriteHandoff, summarizeResult } from '../lib/core/format.js';
-import { renderQuerySteps } from '../lib/core/format.js';
+import { renderConnection, renderResultTable, renderWriteHandoff, renderQuerySteps, summarizeResult } from '../lib/core/format.js';
 import { explainSql } from '../lib/core/explain.js';
 
 /** @returns {import('../lib/core/types.js').QueryResult} */
@@ -68,6 +67,38 @@ describe('summarizeResult', () => {
   it('reports rows, elapsed time, database and truncation', () => {
     assert.equal(summarizeResult(result()), '3 行 / 7ms · world');
     assert.equal(summarizeResult(result({ truncated: true })), '3 行 / 7ms · world（已截断）');
+  });
+
+  it('reports the affected rows of a DML statement, not "0 rows"', () => {
+    // A successful UPDATE returns no result set. Summarising it as "0 行" read like a no-op.
+    assert.equal(summarizeResult({ ...result(), columns: [], rows: [], rowCount: 0, affectedRows: 2 }), '影响 2 行 / 7ms · world');
+    assert.equal(
+      summarizeResult({ ...result(), columns: [], rows: [], rowCount: 0, affectedRows: 1, insertId: 42 }),
+      '影响 1 行，首个自增 ID 42 / 7ms · world',
+    );
+  });
+});
+
+describe('renderQuerySteps for DML', () => {
+  const steps = (overrides) =>
+    renderQuerySteps({
+      connection: { id: 'local', host: '127.0.0.1', port: 3306 },
+      database: 'world',
+      readOnly: false,
+      statementKind: 'update',
+      tables: [{ schema: null, table: 'country' }],
+      ...overrides,
+    });
+
+  it('shows the changed-row count instead of a row count', () => {
+    const text = steps({ result: { ...result(), columns: [], rows: [], rowCount: 0, affectedRows: 2 } });
+    assert.match(text, /影响 2 行/);
+    assert.doesNotMatch(text, /返回 0 行/);
+  });
+
+  it('says when no row matched', () => {
+    const text = steps({ result: { ...result(), columns: [], rows: [], rowCount: 0, affectedRows: 0 } });
+    assert.match(text, /影响 0 行/);
   });
 });
 
