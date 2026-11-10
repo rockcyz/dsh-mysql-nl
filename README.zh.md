@@ -1,5 +1,7 @@
 # MySQL 自然语言查询插件（dsh-mysql-nl）
 
+[English](README.md) | [简体中文](README.zh.md)
+
 一个 DeepSeek Harness（DSH）插件：**连接 MySQL → 读取真实数据表结构 → 把你的自然语言查询需求生成准确的
 SQL → 执行并把数据返回给你**。你在对话框里直接说需求即可，不需要自己写 SQL。
 
@@ -41,16 +43,29 @@ SQL → 执行并把数据返回给你**。你在对话框里直接说需求即�
 
 ## 安装
 
-插件是一个标准的 DSH bundle，用 `plugin_manager` 安装即可（需要 `danger-full-access` 或当次审批）：
+直接从本仓库安装（推荐，任何人可用）：
 
 ```
 plugin_manager(action: "install_bundle",
-               target: "C:\\Users\\rockc\\Documents\\deepseek-harness\\default-workspace\\dsh-mysql-nl")
+               target: "github:rockcyz/dsh-mysql-nl")
+```
+
+或命令行：
+
+```sh
+dsh plugin --profile <profile> add github:rockcyz/dsh-mysql-nl
+```
+
+本地 checkout 安装则填绝对路径：
+
+```
+plugin_manager(action: "install_bundle",
+               target: "/绝对路径/dsh-mysql-nl")
 ```
 
 安装会：
 
-1. 在本 profile 的 `package.json` 里加入 `"dsh-mysql-nl": "link:<插件目录>"` 并选中 bundle；
+1. 把包写进本 profile 的 `package.json` 依赖并选中 bundle；
 2. 通过 `cordis.patch.yml` 插入 `mysql-nl` 这一行（`lib/index.js`）；
 3. 由 HMR 立刻生效。
 
@@ -82,7 +97,7 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
       "host": "127.0.0.1",
       "port": 3306,
       "user": "root",
-      "password": "root",
+      "password": "${env:MYSQL_PWD}",
       "database": "world",
       "readOnly": true,
       "maxRows": 200,
@@ -106,8 +121,9 @@ cordis_inspect_query(platform: "host", provider: "Config", method: "listConfigs"
 
 要点：
 
-- **密码可以写 `${env:变量名}`**，从进程环境变量取值，避免把口令写进文件。变量缺失时会直接报错，
-  不会静默用空密码连接。
+- **密码优先写 `${env:变量名}`**，从进程环境变量取值，避免把口令写进文件。变量缺失时会直接报错，
+  不会静默用空密码连接。写字面量密码也能用，但它会以明文留在磁盘上；务必把这类文件排除在版本库外
+  （本仓库的 `.gitignore` 已经忽略 `.dsh-mysql.json`）。
 - `default` 指定默认连接；只有一个连接时可以省略。也可以用连接里的 `"isDefault": true`。
 - 也接受**只写一个连接**的最简形式（不需要 `connections` 数组和 `id`），或把内容包在 `"mysql": {...}` 里。
 - `readOnly` 默认就是 `true`。想要写操作必须显式写 `"readOnly": false`。

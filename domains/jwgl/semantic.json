@@ -143,8 +143,8 @@
       "field": "student.Sname",
       "kind": "person-by-name",
       "identity": "student.Sno",
-      "why": "Sname 不唯一：「葛波」在库里是两位不同的人（2000014 计算机系 / 2000020 会计系）。姓名不是标识符，用它筛选/关联/分组都会出错，而且不报错",
-      "lookupSql": "SELECT Sno, Sname, Sdept FROM jwgl.student WHERE Sname = '葛波'",
+      "why": "Sname 不唯一：本库里有两位同名学生（分属不同系）。姓名不是标识符，用它筛选/关联/分组都会出错，而且不报错",
+      "lookupSql": "SELECT Sno, Sname, Sdept FROM jwgl.student WHERE Sname = ?",
       "presentColumns": ["Sno", "Sname", "Sdept"],
       "expectAmbiguous": true,
       "rule": "候选多于 1 行时**不得自行选择**，必须把候选连同学号和系列给用户，等确认后再用 Sno 查询；命中 0 行时先用 LIKE 找近似值再确认",
@@ -180,13 +180,13 @@
       "title": "姓名会重名，不能用来关联或去重",
       "wrong": "按 Sname 分组统计人数 / JOIN ON Sname",
       "right": "一律用 Sno 关联；只有展示时才用 Sname",
-      "why": "当前数据里「葛波」出现两次（Sno 2000014 和 2000020），是两个不同的人"
+      "why": "当前数据里有两位学生同名（不同系），是两个不同的人"
     },
     {
       "title": "学号 Sno 是整数，不是字符串",
       "wrong": "WHERE Sno LIKE '2000%' 之外再假定它是文本；或用 ORDER BY Sno 期望字典序",
       "right": "按数值比较。若将来学校改用带前导零的学号，必须改列类型，否则前导零会丢",
-      "why": "当前数据是 7 位纯数字（2000012 等）没有前导零，所以问题暂未暴露"
+      "why": "当前数据是 7 位纯数字没有前导零，所以问题暂未暴露"
     },
     {
       "title": "先行课 Cpno 是 varchar，主键 Cno 是 int",
@@ -204,7 +204,7 @@
       "title": "「学生总数」和「选课人数」是两个概念",
       "wrong": "SELECT COUNT(*) FROM student —— 当作「选了课的人数」",
       "right": "要「选过至少一门课的学生数」用 COUNT(DISTINCT sc.Sno) 或 JOIN 后去重",
-      "why": "当前 7 个学生里有 2 个（张三 2000015、葛波 2000020）一门课都没选"
+      "why": "当前 7 个学生里有 2 个一门课都没选"
     },
     {
       "title": "sc 是复合主键，不存在「重复选课」",
@@ -233,7 +233,7 @@
     {
       "question": "哪些学生一门课都没选",
       "sql": "SELECT s.Sno AS 学号, s.Sname AS 姓名 FROM jwgl.student s LEFT JOIN jwgl.sc ON sc.Sno = s.Sno WHERE sc.Sno IS NULL",
-      "expect": "2 行：张三 2000015、葛波 2000020"
+      "expect": "2 行（未选课学生的学号与姓名，现查为准）"
     },
     {
       "question": "数据库原理这门课的先行课是什么",

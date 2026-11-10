@@ -69,7 +69,8 @@ WHERE Sdept = '计算机'   WHERE Ssex = '男'
 
 ### 3. 姓名不是标识符；重名必须先消歧
 
-`Sname` **不唯一**：「葛波」在本库里有两位 —— `Sno` **2000014**（计算机系）和 **2000020**（会计系）。
+`Sname` **不唯一**：本库里有两位学生同名（示例记作「某重名学生」，学号以 `Sno-A`、`Sno-B` 代指，
+实际值请跑下面的消歧 SQL 现查）。
 
 凡是要**认定身份**的场合，一律用 `Sno`：
 
@@ -78,21 +79,21 @@ WHERE Sdept = '计算机'   WHERE Ssex = '男'
 | `WHERE` 筛选 | `Sno` |
 | `JOIN ON` | `Sno` |
 | `GROUP BY` / `DISTINCT` | `Sno` |
-| 结果展示 | `Sno` **必须带上**，否则两行「葛波」用户分不清 |
+| 结果展示 | `Sno` **必须带上**，否则两行同名学生用户分不清 |
 
 **用户用姓名提问时必须先消歧**，不要自己挑一个：
 
 ```sql
--- 先查候选（这一步只读，安全）
-SELECT Sno, Sname, Sdept FROM jwgl.student WHERE Sname = '葛波';
+-- 先查候选（这一步只读，安全）；把 ? 换成用户问的姓名
+SELECT Sno, Sname, Sdept FROM jwgl.student WHERE Sname = '?';
 ```
 
 命中多行 → 停下来把候选列给用户，等确认后再用 `Sno` 查：
 
 ```
-「葛波」在库里有 2 位，你查哪一位？
-1. 2000014 葛波（计算机系）
-2. 2000020 葛波（会计系）
+「某某」在库里有 2 位，你查哪一位？
+1. <Sno-A>（计算机系）
+2. <Sno-B>（会计系）
 ```
 
 命中 0 行 → 可能是记错或错别字，先 `LIKE '%…%'` 找近似值让用户确认，**不要直接回答"查无此人"**。
@@ -127,7 +128,7 @@ JOIN jwgl.course p ON p.Cno = CAST(c.Cpno AS UNSIGNED)
 
 ### 7. 「学生总数」≠「选课人数」
 
-7 个学生里有 2 个一门课都没选（张三 2000015、葛波 2000020）。
+7 个学生里有 2 个一门课都没选（用 `SELECT s.Sno FROM student s LEFT JOIN sc ON sc.Sno=s.Sno WHERE sc.Sno IS NULL` 现查）。
 要「选过课的学生数」请用 `COUNT(DISTINCT sc.Sno)`，或先 JOIN。
 
 ## 实体与关联（已验证）

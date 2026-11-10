@@ -5,7 +5,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const ASAR = 'C:\\Users\\rockc\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\app.asar';
+/** Path to the installed DSH app.asar; override with DSH_APP_ASAR on other machines. */
+const ASAR = process.env.DSH_APP_ASAR
+  ?? 'C:\\Program Files\\DeepSeek Harness\\resources\\app.asar';
 const OUT = process.argv[2];
 const fd = fs.openSync(ASAR, 'r');
 const head = Buffer.alloc(16);

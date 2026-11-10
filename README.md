@@ -1,5 +1,7 @@
 # MySQL natural-language query plugin (dsh-mysql-nl)
 
+[English](README.md) | [简体中文](README.zh.md)
+
 A DeepSeek Harness (DSH) plugin: **connect to MySQL → read the real schema → turn a plain-language
 request into accurate SQL → run it and return the rows.** You type what you want in the chat box; you
 never write SQL yourself.
@@ -43,15 +45,27 @@ actually runs:
 
 ## Install
 
-The plugin is a standard DSH bundle; install it with `plugin_manager` (needs `danger-full-access` or
-per-call approval):
+Install directly from this repository (recommended — works for anyone):
 
 ```
 plugin_manager(action: "install_bundle",
-               target: "C:\\Users\\rockc\\Documents\\deepseek-harness\\default-workspace\\dsh-mysql-nl")
+               target: "github:rockcyz/dsh-mysql-nl")
 ```
 
-That adds `"dsh-mysql-nl": "link:<plugin dir>"` to the profile manifest, selects the bundle,
+or from the command line:
+
+```sh
+dsh plugin --profile <profile> add github:rockcyz/dsh-mysql-nl
+```
+
+Installing a local checkout uses an absolute path instead:
+
+```
+plugin_manager(action: "install_bundle",
+               target: "/absolute/path/to/dsh-mysql-nl")
+```
+
+That adds the package to the profile manifest, selects the bundle,
 inserts the `mysql-nl` row from `cordis.patch.yml` (entry `lib/index.js`), and activates it through HMR.
 
 > **Note:** if this package was already loaded once and failed to load, the host caches that **failed
@@ -84,7 +98,7 @@ and finally checks the home directory and `~/.dsh`.
       "host": "127.0.0.1",
       "port": 3306,
       "user": "root",
-      "password": "root",
+      "password": "${env:MYSQL_PWD}",
       "database": "world",
       "readOnly": true,
       "maxRows": 200,
@@ -108,9 +122,10 @@ and finally checks the home directory and `~/.dsh`.
 
 Notes:
 
-- **Passwords may be written as `${env:NAME}`** to read from the process environment, so no secret lands
-  in the file. A missing variable is a hard error — the plugin never silently connects with an empty
-  password.
+- **Prefer `${env:NAME}` for passwords** — it reads the value from the process environment, so no secret
+  lands in the file. A missing variable is a hard error — the plugin never silently connects with an empty
+  password. A literal password works but stays in plain text on disk; keep such files out of version
+  control (this repository's `.gitignore` already ignores `.dsh-mysql.json`).
 - `default` names the default connection; with a single connection it can be omitted. A connection may
   also set `"isDefault": true`.
 - A **minimal single-connection** file works too (no `connections` array, no `id`), as does wrapping the
