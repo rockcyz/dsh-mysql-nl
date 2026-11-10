@@ -1,0 +1,56 @@
+{
+  "name": "dsh-mysql-nl",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "DeepSeek Harness 插件：连接 MySQL，读取数据表结构，把你的自然语言查询需求翻译成准确的 SQL 并执行。",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./mysql": "./lib/index.js",
+    "./core": "./lib/core/index.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "meta": {
+    "title": "MySQL 自然语言查询",
+    "description": "连接 MySQL，读取真实表结构，把自然语言需求翻译成准确的 SQL 并执行。"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "lib",
+    "bin",
+    "skill",
+    "domains",
+    "scripts",
+    "locale",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "SHARING.md",
+    "DOMAINS.zh.md"
+  ],
+  "bin": {
+    "mysql-nl": "./bin/mysql-nl.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test-isolation=none --test \"test/*.test.mjs\"",
+    "verify": "node ../verify.mjs",
+    "build:skill": "node scripts/build-skill.mjs",
+    "check:skill": "node scripts/build-skill.mjs --check",
+    "pack:skill": "node scripts/build-skill.mjs --zip",
+    "build:domains": "node scripts/build-domains.mjs",
+    "check:domains": "node scripts/build-domains.mjs --check",
+    "verify:domain": "node bin/mysql-nl.mjs verify --semantic domains/jwgl/semantic.json"
+  },
+  "dependencies": {
+    "mysql2": "^3.11.5"
+  },
+  "license": "MIT"
+}

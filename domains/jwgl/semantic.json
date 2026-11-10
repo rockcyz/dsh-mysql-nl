@@ -1,0 +1,249 @@
+{
+  "$comment": "教务管理领域语义层。这里记录的必须是 INFORMATION_SCHEMA 读不出来的知识：业务词汇、口径、字典、关联路径、以及会咬人的陷阱。表结构本身不在这里重复声明（schema 命令实时读），只声明校验所需的列与类型，用于 scripts/verify 检测漂移。",
+  "domain": "jwgl-education",
+  "title": "教务管理",
+  "database": "jwgl",
+  "connection": null,
+
+  "entities": {
+    "学生": { "table": "student", "pk": "Sno", "oneLiner": "一个学生，用学号 Sno 唯一标识" },
+    "课程": { "table": "course", "pk": "Cno", "oneLiner": "一门课程，用课号 Cno 唯一标识" },
+    "选课记录": { "table": "sc", "pk": ["Sno", "Cno"], "oneLiner": "某学生选了某门课，复合主键；成绩存在这条记录上" }
+  },
+
+  "tables": {
+    "student": {
+      "comment": "学生表",
+      "columns": {
+        "Sno": { "type": "int", "note": "学号。整数主键，不是字符串；不存在前导零" },
+        "Sname": { "type": "varchar(10)", "note": "姓名。**会重名**，不能当唯一键" },
+        "Ssex": { "type": "varchar(10)", "note": "性别。存中文「男」「女」，不是 M/F" },
+        "Sage": { "type": "int", "note": "年龄。是快照值，会过时；不要用它推算出生年份做精确生日计算" },
+        "Sdept": { "type": "varchar(45)", "note": "所在系。存中文系名「计算机」「会计」「管理」，不是 CS/ACC 之类编码" }
+      }
+    },
+    "course": {
+      "comment": "课程表",
+      "columns": {
+        "Cno": { "type": "int", "note": "课号。整数主键" },
+        "Cname": { "type": "varchar(45)", "note": "课程名" },
+        "Cpno": { "type": "varchar(45)", "note": "先行课课号。**是字符串**（Cno 是 int），NULL 表示没有先行课；没有外键约束指向 course.Cno" },
+        "Ccredit": { "type": "int", "note": "学分" }
+      }
+    },
+    "sc": {
+      "comment": "学生选课表",
+      "columns": {
+        "Sno": { "type": "int", "note": "学号，外键 → student.Sno" },
+        "Cno": { "type": "int", "note": "课号，外键 → course.Cno" },
+        "Grade": { "type": "int", "note": "成绩。**可为 NULL**（已选课但未录入成绩）。当前 11 条记录恰好都有成绩，但列允许 NULL，统计口径必须考虑" }
+      }
+    }
+  },
+
+  "forbidden": [
+    {
+      "table": "city",
+      "reason": "world 示例库的副本（4079 行，与 world.city 完全一致）。与教务业务毫无关系，出现在任何教务查询里都是错的"
+    },
+    {
+      "table": "country",
+      "reason": "world 示例库的副本（239 行，与 world.country 完全一致）。教务场景下不应引用"
+    },
+    {
+      "table": "countrylanguage",
+      "reason": "world 示例库的副本（984 行）。教务场景下不应引用"
+    }
+  ],
+
+  "joins": [
+    {
+      "name": "选课 → 学生",
+      "on": "sc.Sno = student.Sno",
+      "cardinality": "多对一",
+      "note": "已有外键约束",
+      "verifySql": "SELECT 1 FROM jwgl.sc JOIN jwgl.student ON sc.Sno = student.Sno LIMIT 1"
+    },
+    {
+      "name": "选课 → 课程",
+      "on": "sc.Cno = course.Cno",
+      "cardinality": "多对一",
+      "note": "已有外键约束",
+      "verifySql": "SELECT 1 FROM jwgl.sc JOIN jwgl.course ON sc.Cno = course.Cno LIMIT 1"
+    },
+    {
+      "name": "课程 → 它的先行课（自连接）",
+      "on": "course2.Cno = CAST(course.Cpno AS UNSIGNED)",
+      "cardinality": "多对一（自引用）",
+      "note": "Cpno 是 varchar 而 Cno 是 int。不写 CAST 时 MySQL 会隐式转换、结果也对，但索引失效且语义含糊；多行链式时容易出错。没有外键约束，所以 Cpno 里可能存在指向不存在课号的脏数据",
+      "verifySql": "SELECT 1 FROM jwgl.course c JOIN jwgl.course p ON p.Cno = CAST(c.Cpno AS UNSIGNED) LIMIT 1"
+    }
+  ],
+
+  "dictionary": {
+    "Ssex": { "取值": ["男", "女"], "注意": "中文，不是 M/F" },
+    "Sdept": { "当前取值": ["计算机", "会计", "管理"], "注意": "中文系名，不是编码；新增系会直接出现新值，不要硬编码枚举判断" },
+    "Cpno": { "NULL": "没有先行课" },
+    "Grade": { "NULL": "已选课但成绩未录入", "及格线": 60, "满分": 100 }
+  },
+
+  "metrics": [
+    {
+      "name": "学生总数",
+      "sql": "COUNT(*)",
+      "uses": ["student.Sno"],
+      "note": "按主键计数"
+    },
+    {
+      "name": "选课人次",
+      "sql": "COUNT(*)",
+      "uses": ["sc.Sno"],
+      "note": "sc 的一行 = 一次选课。注意这不等于「学生人数」，一个学生可以选多门课"
+    },
+    {
+      "name": "平均分",
+      "sql": "ROUND(AVG(sc.Grade), 2)",
+      "uses": ["sc.Grade"],
+      "note": "AVG 自动忽略 NULL，即只按「已录入成绩」的记录计算。分母口径 = COUNT(Grade)，不是 COUNT(*)"
+    },
+    {
+      "name": "及格率",
+      "sql": "ROUND(SUM(CASE WHEN sc.Grade >= 60 THEN 1 ELSE 0 END) / NULLIF(COUNT(sc.Grade), 0) * 100, 1)",
+      "uses": ["sc.Grade"],
+      "note": "分母必须是 COUNT(sc.Grade)（有成绩的记录数），用 COUNT(*) 会把未录入成绩的记录算进分母而拉低及格率。NULLIF 防止除零"
+    },
+    {
+      "name": "选中学分",
+      "sql": "SUM(course.Ccredit)",
+      "uses": ["course.Ccredit"],
+      "note": "按选课记录累加，不考虑是否及格。要算「已获得学分」必须加结果过滤"
+    },
+    {
+      "name": "已获得学分",
+      "sql": "SUM(CASE WHEN sc.Grade >= 60 THEN course.Ccredit ELSE 0 END)",
+      "uses": ["course.Ccredit", "sc.Grade"],
+      "note": "只有及格才计入。与「选中学分」是两个不同口径，问「学分」时要先确认是哪个"
+    },
+    {
+      "name": "课程绩点",
+      "sql": "CASE WHEN sc.Grade >= 60 THEN (sc.Grade - 50) / 10 ELSE 0 END",
+      "uses": ["sc.Grade"],
+      "note": "**本库没有绩点字段，这是本领域约定的换算口径**，不是数据库里的事实。规则：≥60 分时绩点=(成绩-50)/10（60→1.0，90→4.0）；<60 记 0。如果学校用的不是这套换算，必须改这里"
+    },
+    {
+      "name": "加权平均绩点",
+      "sql": "ROUND(SUM((CASE WHEN sc.Grade >= 60 THEN (sc.Grade - 50) / 10 ELSE 0 END) * course.Ccredit) / NULLIF(SUM(course.Ccredit), 0), 2)",
+      "uses": ["sc.Grade", "course.Ccredit"],
+      "note": "按学分加权。权重是「选中学分」还是「已获得学分」会影响结果 —— 默认用选中学分作分母，这是本领域的约定"
+    }
+  ],
+
+  "ambiguity": [
+    {
+      "field": "student.Sname",
+      "kind": "person-by-name",
+      "identity": "student.Sno",
+      "why": "Sname 不唯一：「葛波」在库里是两位不同的人（2000014 计算机系 / 2000020 会计系）。姓名不是标识符，用它筛选/关联/分组都会出错，而且不报错",
+      "lookupSql": "SELECT Sno, Sname, Sdept FROM jwgl.student WHERE Sname = '葛波'",
+      "presentColumns": ["Sno", "Sname", "Sdept"],
+      "expectAmbiguous": true,
+      "rule": "候选多于 1 行时**不得自行选择**，必须把候选连同学号和系列给用户，等确认后再用 Sno 查询；命中 0 行时先用 LIKE 找近似值再确认",
+      "confirmedKey": "Sno"
+    },
+    {
+      "field": "course.Cname",
+      "kind": "entity-by-title",
+      "identity": "course.Cno",
+      "why": "课程名理论上可能重复，且学生常记错/简写（如「数据库」→「数据库原理」）",
+      "lookupSql": "SELECT Cno, Cname FROM jwgl.course WHERE Cname LIKE '%数据库%'",
+      "presentColumns": ["Cno", "Cname"],
+      "expectAmbiguous": false,
+      "rule": "用 LIKE 找候选，确认唯一后改用 Cno 查询",
+      "confirmedKey": "Cno"
+    }
+  ],
+
+  "traps": [
+    {
+      "title": "库里有三张 world 副本表，看起来能用其实是垃圾",
+      "wrong": "SELECT COUNT(*) FROM jwgl.country  —— 或把 country 当成「学生国籍」",
+      "right": "教务查询只碰 student / course / sc 三张表",
+      "why": "jwgl.city / jwgl.country / jwgl.countrylanguage 与 world 库完全一致，是历史遗留。schema 命令会列出它们且不标注任何异常，agent 很容易误用"
+    },
+    {
+      "title": "Sdept 和 Ssex 存的是中文，不是编码",
+      "wrong": "WHERE Sdept = 'CS'   → 0 行；WHERE Ssex = 'M' → 0 行",
+      "right": "WHERE Sdept = '计算机'；WHERE Ssex = '男'",
+      "why": "按英文编码过滤会静默返回空集，而且不报错。这是本领域最高频的错误"
+    },
+    {
+      "title": "姓名会重名，不能用来关联或去重",
+      "wrong": "按 Sname 分组统计人数 / JOIN ON Sname",
+      "right": "一律用 Sno 关联；只有展示时才用 Sname",
+      "why": "当前数据里「葛波」出现两次（Sno 2000014 和 2000020），是两个不同的人"
+    },
+    {
+      "title": "学号 Sno 是整数，不是字符串",
+      "wrong": "WHERE Sno LIKE '2000%' 之外再假定它是文本；或用 ORDER BY Sno 期望字典序",
+      "right": "按数值比较。若将来学校改用带前导零的学号，必须改列类型，否则前导零会丢",
+      "why": "当前数据是 7 位纯数字（2000012 等）没有前导零，所以问题暂未暴露"
+    },
+    {
+      "title": "先行课 Cpno 是 varchar，主键 Cno 是 int",
+      "wrong": "ON course2.Cno = course.Cpno（能跑，但依赖隐式类型转换）",
+      "right": "ON course2.Cno = CAST(course.Cpno AS UNSIGNED)",
+      "why": "隐式转换在大表上会让索引失效，且把非数字脏数据悄悄转成 0 去匹配。另外 Cpno 没有外键约束，可能指向不存在的课号"
+    },
+    {
+      "title": "Grade 可以为 NULL，平均分和及格率的分母不同",
+      "wrong": "及格率 = SUM(Grade>=60)/COUNT(*)",
+      "right": "及格率 = SUM(Grade>=60)/COUNT(Grade)",
+      "why": "「已选课但未录成绩」的记录会让 COUNT(*) 偏大、及格率偏低。本库当前没有这种记录，但列允许 NULL，写死 COUNT(*) 会在数据变化后出错"
+    },
+    {
+      "title": "「学生总数」和「选课人数」是两个概念",
+      "wrong": "SELECT COUNT(*) FROM student —— 当作「选了课的人数」",
+      "right": "要「选过至少一门课的学生数」用 COUNT(DISTINCT sc.Sno) 或 JOIN 后去重",
+      "why": "当前 7 个学生里有 2 个（张三 2000015、葛波 2000020）一门课都没选"
+    },
+    {
+      "title": "sc 是复合主键，不存在「重复选课」",
+      "wrong": "担心同一个人同一门课有多条记录而加 DISTINCT",
+      "right": "(Sno, Cno) 是主键，天然唯一；这里的 DISTINCT 是多余的",
+      "why": "复合主键约束保证了一人一课只有一条记录。本库也没有「重修」概念"
+    }
+  ],
+
+  "examples": [
+    {
+      "question": "计算机系有多少学生",
+      "sql": "SELECT COUNT(*) AS 人数 FROM jwgl.student WHERE Sdept = '计算机'",
+      "expect": "3"
+    },
+    {
+      "question": "每个系各有多少学生",
+      "sql": "SELECT Sdept AS 系, COUNT(*) AS 人数 FROM jwgl.student GROUP BY Sdept ORDER BY 人数 DESC",
+      "expect": "3 行：计算机 3、管理 3、会计 1"
+    },
+    {
+      "question": "每门课程的选课人数和平均分",
+      "sql": "SELECT c.Cname AS 课程, COUNT(sc.Sno) AS 选课人数, ROUND(AVG(sc.Grade), 2) AS 平均分 FROM jwgl.course c LEFT JOIN jwgl.sc ON sc.Cno = c.Cno GROUP BY c.Cno, c.Cname ORDER BY c.Cno",
+      "expect": "6 行，含选课人数为 0 的课程"
+    },
+    {
+      "question": "哪些学生一门课都没选",
+      "sql": "SELECT s.Sno AS 学号, s.Sname AS 姓名 FROM jwgl.student s LEFT JOIN jwgl.sc ON sc.Sno = s.Sno WHERE sc.Sno IS NULL",
+      "expect": "2 行：张三 2000015、葛波 2000020"
+    },
+    {
+      "question": "数据库原理这门课的先行课是什么",
+      "sql": "SELECT c.Cname AS 课程, p.Cname AS 先行课 FROM jwgl.course c LEFT JOIN jwgl.course p ON p.Cno = CAST(c.Cpno AS UNSIGNED) WHERE c.Cname = '数据库原理'",
+      "expect": "数据库原理 ← 离散数学"
+    },
+    {
+      "question": "每个学生的平均分和已获得学分",
+      "sql": "SELECT s.Sno AS 学号, s.Sname AS 姓名, ROUND(AVG(sc.Grade), 2) AS 平均分, SUM(CASE WHEN sc.Grade >= 60 THEN c.Ccredit ELSE 0 END) AS 已获得学分 FROM jwgl.student s JOIN jwgl.sc ON sc.Sno = s.Sno JOIN jwgl.course c ON c.Cno = sc.Cno GROUP BY s.Sno, s.Sname ORDER BY 平均分 DESC",
+      "expect": "5 行（只有选过课的 5 个学生）"
+    }
+  ]
+}

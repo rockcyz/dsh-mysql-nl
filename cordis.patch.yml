@@ -1,0 +1,11 @@
+[
+  {
+    "insert": [
+      {
+        "id": "mysql-nl",
+        "name": "dsh-mysql-nl",
+        "config": {}
+      }
+    ]
+  }
+]

@@ -1,0 +1,53 @@
+{
+  "format": 1,
+  "title": {
+    "en": "rockc's DSH plugins",
+    "zh-cn": "rockc 的 DSH 插件"
+  },
+  "description": {
+    "en": "MySQL natural-language query plugin for DeepSeek Harness, built for database coursework.",
+    "zh-cn": "面向数据库课程的 DeepSeek Harness MySQL 自然语言查询插件。"
+  },
+  "metadata": {
+    "categories": {
+      "database": { "title": { "en": "Database", "zh-cn": "数据库" } }
+    },
+    "labels": {
+      "education": { "title": { "en": "Education", "zh-cn": "教学" } }
+    },
+    "sortKeys": {}
+  },
+  "plugins": [
+    {
+      "name": "dsh-mysql-nl",
+      "title": {
+        "en": "MySQL natural language query",
+        "zh-cn": "MySQL 自然语言查询"
+      },
+      "description": {
+        "en": "Connect to MySQL, read the real table structure, turn a plain-language question into accurate schema-grounded SQL, execute it, and explain every clause. Read-only by default.",
+        "zh-cn": "连接 MySQL，读取真实表结构，把自然语言查询需求翻译成准确的 SQL 并执行；输出执行步骤、SQL、逐子句讲解与结果表格。默认只读。"
+      },
+      "author": "rockc",
+      "homepage": "https://github.com/rockc/dsh-mysql-nl",
+      "repository": { "url": "https://github.com/rockc/dsh-mysql-nl" },
+      "metadata": {
+        "category": "database",
+        "labels": ["education"],
+        "keywords": ["mysql", "sql", "database", "natural language", "teaching", "数据库", "自然语言"]
+      },
+      "versions": [
+        {
+          "version": "0.1.0",
+          "publishTimestamp": 1762745000,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/rockc/dsh-mysql-nl",
+            "commit": "REPLACE_WITH_40_HEX_COMMIT_SHA"
+          },
+          "engines": { "dsh": ">=0.2.0" }
+        }
+      ]
+    }
+  ]
+}

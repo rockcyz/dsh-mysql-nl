@@ -1,0 +1,4 @@
+{
+  "title": "MySQL Natural-Language Query",
+  "description": "Connects to MySQL, reads the real schema, turns a plain-language request into accurate SQL, runs it, and returns the rows."
+}
