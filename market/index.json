@@ -43,7 +43,7 @@
           "source": {
             "type": "git",
             "url": "https://github.com/rockcyz/dsh-mysql-nl",
-            "commit": "8dbad9394abdc487352d3b46845adf0a3f0c6634"
+            "commit": "12a47df38cef9664b82674aa469a757b5daff27c"
           },
           "engines": { "dsh": ">=0.2.0" }
         },
