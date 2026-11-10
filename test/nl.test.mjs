@@ -280,15 +280,36 @@ describe('generateSql', () => {
       model: 'm',
       allowWrite: true,
     });
-    // Write mode is a different rule set, not the read prompt plus a permission line.
+    // Combined rules, not the read prompt plus a permission line.
     assert.match(system, /INSERT \/ UPDATE \/ DELETE \/ REPLACE/);
     assert.doesNotMatch(system, /只输出\*\*一条\*\* SELECT/);
-    // The model must know the statement will not be executed by this tool.
+    // The model must know a write will not be executed by this tool.
     assert.match(system, /不会执行/);
     assert.match(system, /DBeaver/);
-    // Safety instruction that matters most for writes.
     assert.match(system, /WHERE/);
     assert.match(system, /绝不/);
+  });
+
+  it('still allows a SELECT under the combined rules', async () => {
+    // Regression guard: the plugin always generates with allowWrite:true, so a write-only prompt
+    // made every plain query unanswerable — the model found no permitted statement kind and
+    // returned nothing, which surfaced as "语句为空".
+    let system = '';
+    await generateSql({
+      conn: CONN,
+      loader: fakeLoader([]),
+      database: 'world',
+      question: '人口最多的三个国家',
+      llm: async (options) => {
+        system = options.system;
+        return 'SELECT Name FROM country ORDER BY Population DESC LIMIT 3';
+      },
+      provider: 'p',
+      model: 'm',
+      allowWrite: true,
+    });
+    assert.match(system, /输出 \*\*SELECT\*\*/);
+    assert.match(system, /LIMIT/);
   });
 
   it('keeps management statements out of the write prompt', async () => {
