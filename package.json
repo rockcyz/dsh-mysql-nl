@@ -2,7 +2,7 @@
   "name": "dsh-mysql-nl",
   "version": "0.2.0",
   "type": "module",
-  "description": "DeepSeek Harness 插件：连接 MySQL，读取数据表结构，把你的自然语言查询需求翻译成准确的 SQL 并执行。",
+  "description": "DeepSeek Harness 插件：连接 MySQL，读取真实表结构，把自然语言需求翻译成准确的 SQL。查询直接执行；写操作只生成 SQL 与讲解，交由用户在自己的客户端执行。",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
@@ -13,7 +13,7 @@
   },
   "meta": {
     "title": "MySQL 自然语言查询",
-    "description": "连接 MySQL，读取真实表结构，把自然语言需求翻译成准确的 SQL 并执行。"
+    "description": "连接 MySQL，读取真实表结构，把自然语言需求翻译成准确的 SQL。查询直接执行，写操作只生成不执行。"
   },
   "dsh": {
     "bundle": {
